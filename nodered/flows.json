@@ -1,0 +1,345 @@
+[
+  {
+    "id": "flow_ta3",
+    "type": "tab",
+    "label": "TA3 IoT - DataCenter Andino",
+    "disabled": false,
+    "info": "Mosquitto -> validacion/clasificacion -> InfluxDB. Ingresa el token de InfluxDB en el nodo de configuracion 'InfluxDB local'."
+  },
+  {
+    "id": "mqtt_broker",
+    "type": "mqtt-broker",
+    "name": "Mosquitto local",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "nodered-ta3",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthPayload": "",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closePayload": "",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willPayload": "",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "influx_cfg",
+    "type": "influxdb",
+    "hostname": "127.0.0.1",
+    "port": "8086",
+    "protocol": "http",
+    "database": "database",
+    "name": "InfluxDB local",
+    "usetls": false,
+    "tls": "",
+    "influxdbVersion": "2.0",
+    "url": "http://localhost:8086",
+    "timeout": "10",
+    "rejectUnauthorized": true
+  },
+  {
+    "id": "c1",
+    "type": "comment",
+    "z": "flow_ta3",
+    "name": "1) Telemetria: validar, clasificar, guardar, alertar",
+    "info": "",
+    "x": 230,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "in_tel",
+    "type": "mqtt in",
+    "z": "flow_ta3",
+    "name": "Telemetria",
+    "topic": "dcandino/sala01/telemetria",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 120,
+    "y": 100,
+    "wires": [
+      [
+        "fn_valida",
+        "wd"
+      ]
+    ]
+  },
+  {
+    "id": "fn_valida",
+    "type": "function",
+    "z": "flow_ta3",
+    "name": "Validar y clasificar",
+    "func": "// Umbrales configurables (variables de entorno de Node-RED; valores por defecto didacticos)\nconst U_ADV  = Number(env.get(\"UMBRAL_ADVERTENCIA\")) || 28;\nconst U_CRIT = Number(env.get(\"UMBRAL_CRITICO\"))     || 30;\nconst L_BAJA = Number(env.get(\"LUZ_BAJA_PCT\"))       || 20;\nconst L_ALTA = Number(env.get(\"LUZ_ALTA_PCT\"))       || 70;\n\nconst p   = msg.payload || {};\nconst dev = p.device_id || \"desconocido\";\nconst t = p.temp, h = p.hum, l = p.luz_pct;\n\n// 1) VALIDACION\nconst errores = [];\nif (typeof t !== \"number\" || !isFinite(t) || t < -40 || t > 80) errores.push(\"temp nula o fuera de rango (-40..80)\");\nif (h !== null && h !== undefined && (typeof h !== \"number\" || h < 0 || h > 100)) errores.push(\"humedad fuera de rango (0..100)\");\nif (typeof l !== \"number\" || l < 0 || l > 100) errores.push(\"luz_pct fuera de rango (0..100)\");\n\nif (errores.length) {\n    node.warn(\"Lectura invalida descartada: \" + errores.join(\"; \"));\n    return [null, { payload: [ { motivo: errores.join(\"; \"), crudo: JSON.stringify(p) }, { device_id: dev } ] }, null, null];\n}\n\n// 2) CLASIFICACION\nconst estadoTemp = t >= U_CRIT ? \"CRITICO\" : (t >= U_ADV ? \"ADVERTENCIA\" : \"NORMAL\");\nconst codigo = { NORMAL: 0, ADVERTENCIA: 1, CRITICO: 2 }[estadoTemp];\nconst estadoLuz = l < L_BAJA ? \"BAJA\" : (l > L_ALTA ? \"ALTA\" : \"NORMAL\");\n\n// 3) MEDICION (la marca de tiempo la asigna InfluxDB al recibir la escritura)\nconst campos = { temperatura: t, luz_pct: l, luz_raw: p.luz, seq: p.seq };\nif (typeof h === \"number\") campos.humedad = h;\nif (p.ts > 1700000000000) campos.latencia_ms = Date.now() - p.ts;   // solo si el ESP32 envio hora NTP valida\n\nconst msgAmb = { payload: [ campos, { device_id: dev, sala: \"sala01\", estado_temp: estadoTemp, estado_luz: estadoLuz } ] };\nconst msgEstado = { payload: [ { codigo: codigo, estado: estadoTemp }, { device_id: dev } ] };\n\n// 4) ALERTA solo en TRANSICION (evita duplicar el evento en cada lectura critica)\nconst clave = \"estado_prev_\" + dev;\nconst prev = flow.get(clave);\nflow.set(clave, estadoTemp);\nlet msgAlerta = null;\nif (estadoTemp === \"CRITICO\" && prev !== \"CRITICO\") {\n    msgAlerta = { payload: [\n        { temperatura: t, mensaje: \"Temperatura critica: \" + t + \" C (umbral \" + U_CRIT + \" C)\" },\n        { tipo: \"temperatura_critica\", severidad: \"critica\", device_id: dev } ] };\n} else if (prev === \"CRITICO\" && estadoTemp !== \"CRITICO\") {\n    msgAlerta = { payload: [\n        { temperatura: t, mensaje: \"Temperatura normalizada: \" + t + \" C\" },\n        { tipo: \"temperatura_normalizada\", severidad: \"info\", device_id: dev } ] };\n}\n\nreturn [msgAmb, null, msgAlerta, msgEstado];",
+    "outputs": 4,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 100,
+    "wires": [
+      [
+        "inf_amb"
+      ],
+      [
+        "inf_inv",
+        "dbg_inv"
+      ],
+      [
+        "inf_alerta",
+        "dbg_alerta"
+      ],
+      [
+        "inf_estado"
+      ]
+    ]
+  },
+  {
+    "id": "inf_amb",
+    "type": "influxdb out",
+    "z": "flow_ta3",
+    "influxdb": "influx_cfg",
+    "name": "ambiente",
+    "measurement": "ambiente",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "dcandino",
+    "bucket": "sala_servidores",
+    "x": 620,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "inf_inv",
+    "type": "influxdb out",
+    "z": "flow_ta3",
+    "influxdb": "influx_cfg",
+    "name": "lecturas_invalidas",
+    "measurement": "lecturas_invalidas",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "dcandino",
+    "bucket": "sala_servidores",
+    "x": 640,
+    "y": 110,
+    "wires": []
+  },
+  {
+    "id": "inf_alerta",
+    "type": "influxdb out",
+    "z": "flow_ta3",
+    "influxdb": "influx_cfg",
+    "name": "alertas",
+    "measurement": "alertas",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "dcandino",
+    "bucket": "sala_servidores",
+    "x": 620,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "inf_estado",
+    "type": "influxdb out",
+    "z": "flow_ta3",
+    "influxdb": "influx_cfg",
+    "name": "estado_monitoreo",
+    "measurement": "estado_monitoreo",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "dcandino",
+    "bucket": "sala_servidores",
+    "x": 640,
+    "y": 210,
+    "wires": []
+  },
+  {
+    "id": "dbg_inv",
+    "type": "debug",
+    "z": "flow_ta3",
+    "name": "Invalida",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 850,
+    "y": 110,
+    "wires": []
+  },
+  {
+    "id": "dbg_alerta",
+    "type": "debug",
+    "z": "flow_ta3",
+    "name": "ALERTA",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 850,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "c2",
+    "type": "comment",
+    "z": "flow_ta3",
+    "name": "2) Watchdog: 15 s sin datos => SIN_DATOS",
+    "info": "",
+    "x": 210,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "wd",
+    "type": "trigger",
+    "z": "flow_ta3",
+    "name": "Watchdog 15 s",
+    "op1": "",
+    "op2": "SIN_DATOS",
+    "op1type": "nul",
+    "op2type": "str",
+    "duration": "15",
+    "extend": true,
+    "overrideDelay": false,
+    "units": "s",
+    "reset": "",
+    "bytopic": "all",
+    "topic": "topic",
+    "outputs": 1,
+    "x": 360,
+    "y": 320,
+    "wires": [
+      [
+        "fn_wd"
+      ]
+    ]
+  },
+  {
+    "id": "fn_wd",
+    "type": "function",
+    "z": "flow_ta3",
+    "name": "Evento SIN_DATOS",
+    "func": "// Se ejecuta cuando pasan 15 s sin telemetria (desconexion / perdida de mensajes)\nnode.warn(\"Sin datos de telemetria por mas de 15 s\");\nconst dev = \"esp32-sala01\";\nreturn [\n  { payload: [ { codigo: 3, estado: \"SIN_DATOS\" }, { device_id: dev } ] },\n  { payload: [ { mensaje: \"Sin datos de telemetria por mas de 15 s\" },\n               { tipo: \"sin_datos\", severidad: \"alta\", device_id: dev } ] }\n];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 570,
+    "y": 320,
+    "wires": [
+      [
+        "inf_estado"
+      ],
+      [
+        "inf_alerta",
+        "dbg_alerta"
+      ]
+    ]
+  },
+  {
+    "id": "c3",
+    "type": "comment",
+    "z": "flow_ta3",
+    "name": "3) Estado del dispositivo (LWT)",
+    "info": "",
+    "x": 190,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "in_estado",
+    "type": "mqtt in",
+    "z": "flow_ta3",
+    "name": "Estado (LWT)",
+    "topic": "dcandino/sala01/estado",
+    "qos": "1",
+    "datatype": "utf8",
+    "broker": "mqtt_broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 130,
+    "y": 440,
+    "wires": [
+      [
+        "fn_disp"
+      ]
+    ]
+  },
+  {
+    "id": "fn_disp",
+    "type": "function",
+    "z": "flow_ta3",
+    "name": "Formato dispositivo",
+    "func": "// LWT / estado del dispositivo: \"online\" | \"offline\"\nconst v = String(msg.payload).trim().toLowerCase();\nreturn { payload: [ { estado: v }, { device_id: \"esp32-sala01\" } ] };",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 360,
+    "y": 440,
+    "wires": [
+      [
+        "inf_disp"
+      ]
+    ]
+  },
+  {
+    "id": "inf_disp",
+    "type": "influxdb out",
+    "z": "flow_ta3",
+    "influxdb": "influx_cfg",
+    "name": "dispositivo",
+    "measurement": "dispositivo",
+    "precision": "",
+    "retentionPolicy": "",
+    "database": "database",
+    "precisionV18FluxV20": "ms",
+    "retentionPolicyV18Flux": "",
+    "org": "dcandino",
+    "bucket": "sala_servidores",
+    "x": 600,
+    "y": 440,
+    "wires": []
+  }
+]

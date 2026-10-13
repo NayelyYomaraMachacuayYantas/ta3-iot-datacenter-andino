@@ -57,3 +57,11 @@ from(bucket: "sala_servidores")
   |> range(start: -30m)
   |> filter(fn: (r) => r._measurement == "alertas" and r.tipo == "temperatura_critica" and r._field == "temperatura")
   |> first()
+
+
+// 4) Estado de iluminacion actual (BAJA / NORMAL / ALTA, clasificado por Node-RED en el tag estado_luz)
+from(bucket: "sala_servidores")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "ambiente" and r._field == "luz_pct")
+  |> last()
+  |> keep(columns: ["_time", "estado_luz"])

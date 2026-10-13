@@ -1,6 +1,6 @@
 /*
  * TA3 - DataCenter Andino S.A.C.
- * ESP32 + DHT22 + LDR -> MQTT (Mosquitto)
+ * ESP32 + DHT22 + LDR -> MQTT (broker publico EMQX) -> puente -> Mosquitto local
  *
  * Publica cada 5 s un JSON con temperatura, humedad y luz.
  * Usa Last Will (LWT) para que el broker publique "offline" si el ESP32 se cae.
@@ -17,14 +17,15 @@
 const char* WIFI_SSID = "Wokwi-GUEST";   // red WiFi del simulador Wokwi
 const char* WIFI_PASS = "";
 
-// Host/puerto donde Wokwi (nube) pueda alcanzar tu Mosquitto.
-// Ver README, seccion "Conectar Wokwi con Mosquitto".
-const char* MQTT_HOST = "broker.hivemq.com";
+// Wokwi (nube) no ve tu localhost: publica en el broker publico EMQX y
+// el Mosquitto local lo recibe mediante un puente (README, seccion 4, opcion D).
+const char* MQTT_HOST = "broker.emqx.io";
 const int   MQTT_PORT = 1883;
 const char* MQTT_USER = "";              // vacio si allow_anonymous true
 const char* MQTT_PASS = "";
 
-const char* DEVICE_ID    = "esp32-sala01";
+const char* DEVICE_ID    = "esp32-sala01";   // identifica al dispositivo en el JSON (no es el ID de conexion MQTT)
+char clientId[48];                           // ID de conexion MQTT unico, se genera en setup()
 const char* TOPIC_TEL    = "dcandino_nayely_7342/sala01/telemetria";
 const char* TOPIC_ESTADO = "dcandino_nayely_7342/sala01/estado";
 const unsigned long INTERVALO_MS = 5000;
@@ -62,7 +63,7 @@ bool conectarMqtt() {
   const char* user = strlen(MQTT_USER) ? MQTT_USER : NULL;
   const char* pass = strlen(MQTT_USER) ? MQTT_PASS : NULL;
   // clientId, user, pass, willTopic, willQoS, willRetain, willMessage
-  bool ok = mqtt.connect(DEVICE_ID, user, pass, TOPIC_ESTADO, 1, true, "offline");
+  bool ok = mqtt.connect(clientId, user, pass, TOPIC_ESTADO, 1, true, "offline");
   if (ok) {
     Serial.println("OK");
     mqtt.publish(TOPIC_ESTADO, "online", true);   // retained
@@ -114,6 +115,9 @@ void setup() {
   dht.begin();
   pinMode(LDR_PIN, INPUT);
   conectarWiFi();
+  // ID unico por arranque: en un broker publico dos clientes con el mismo ID se expulsan entre si.
+  snprintf(clientId, sizeof(clientId), "dcandino_nayely_esp32_%08lX", (unsigned long)esp_random());
+  Serial.printf("MQTT clientId: %s\n", clientId);
   configTime(0, 0, "pool.ntp.org");               // hora UTC para medir latencia
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setBufferSize(512);

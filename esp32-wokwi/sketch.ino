@@ -19,15 +19,14 @@ const char* WIFI_PASS = "";
 
 // Host/puerto donde Wokwi (nube) pueda alcanzar tu Mosquitto.
 // Ver README, seccion "Conectar Wokwi con Mosquitto".
-const char* MQTT_HOST = "CAMBIAR_POR_HOST_DEL_BROKER";
+const char* MQTT_HOST = "broker.hivemq.com";
 const int   MQTT_PORT = 1883;
 const char* MQTT_USER = "";              // vacio si allow_anonymous true
 const char* MQTT_PASS = "";
 
 const char* DEVICE_ID    = "esp32-sala01";
-const char* TOPIC_TEL    = "dcandino/sala01/telemetria";
-const char* TOPIC_ESTADO = "dcandino/sala01/estado";
-
+const char* TOPIC_TEL    = "dcandino_nayely_7342/sala01/telemetria";
+const char* TOPIC_ESTADO = "dcandino_nayely_7342/sala01/estado";
 const unsigned long INTERVALO_MS = 5000;
 
 #define DHT_PIN  15
